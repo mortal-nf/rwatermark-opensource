@@ -26,7 +26,7 @@
 
 本项目提供客户端应用，扫码即可使用：
 
-![客户端二维码](imgs/f2838ca8ea2dca0dfd657fefc354c250.jpg)
+<img src="imgs/f2838ca8ea2dca0dfd657fefc354c250.jpg" alt="客户端二维码" width="200" />
 
 
 扫码后即可体验完整功能，无需手动配置 API 接口。

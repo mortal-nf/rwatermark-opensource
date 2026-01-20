@@ -1,12 +1,12 @@
 import { Body, Controller, Post,Get, Query, Req, Res } from '@nestjs/common';
-import { ResUtils } from '../../utils/res.utils';
+import { ResUtils } from '../../common/utils/res.utils';
 import { ApiQuery, ApiTags } from '@nestjs/swagger';
 import { RWatermarkService } from '../services/index.service';
-import { DownloadUrlDto, ParseWatermarkDto } from '../../dto/rwatermark.dto';
+import { DownloadUrlDto, ParseWatermarkDto } from '../dto/rwatermark.dto';
 import { Response } from 'express';
 import * as fs from 'fs';
 import { createReadStream } from 'fs';
-import { StreamDownloadService } from '../services/stream-download.implementation';
+import { StreamDownloadService } from '../../download/services/stream-download.implementation';
 
 @ApiTags('rwatermark')
 @Controller('rwatermark')

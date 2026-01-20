@@ -4,7 +4,7 @@
 import { HttpException, Injectable, OnModuleInit } from '@nestjs/common';
 import * as superagent from 'superagent';
 import { Browser, Page } from 'puppeteer-core';
-import { getBrowser } from '../../puppeteer/puppeteer';
+import { getBrowser } from '../../common/puppeteer/puppeteer';
 
 @Injectable()
 export class DouyinV2Service implements OnModuleInit {

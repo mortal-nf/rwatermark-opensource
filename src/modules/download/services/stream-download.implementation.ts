@@ -3,13 +3,31 @@
  * 用于优化大文件下载，支持视频播放器的seek功能和图片的渐进式加载
  */
 
-import { HttpException, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { BusinessException, SystemException } from '../../common/utils/custom.exception';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { createWriteStream, createReadStream } from 'fs';
 import * as superagent from 'superagent';
 import { PassThrough } from 'stream';
+
+// 缓存元数据接口
+interface CacheMetadata {
+  createdAt: number; // 创建时间戳
+  expiresAt: number; // 过期时间戳
+  url: string; // 原始URL
+}
+
+// 缓存配置
+const CACHE_CONFIG = {
+  // 默认缓存过期时间：7天（单位：毫秒）
+  DEFAULT_EXPIRY: 7 * 24 * 60 * 60 * 1000,
+  // 缓存大小限制：10GB（单位：字节）
+  MAX_SIZE: 10 * 1024 * 1024 * 1024,
+  // 清理间隔：1小时（单位：毫秒）
+  CLEANUP_INTERVAL: 60 * 60 * 1000
+};
 /**
  * Service层：流式下载实现
  */
@@ -22,6 +40,8 @@ export class StreamDownloadService {
   constructor() {
     // this.cacheDir = cacheDir;
     this.ensureCacheDir();
+    // 启动定时清理任务
+    this.startCleanupTask();
   }
 
   /**
@@ -34,6 +54,126 @@ export class StreamDownloadService {
   }
 
   /**
+   * 保存缓存元数据
+   * @param filePath 缓存文件路径
+   * @param url 原始URL
+   */
+  private saveCacheMetadata(filePath: string, url: string): void {
+    try {
+      const metadataPath = filePath + '.meta';
+      const now = Date.now();
+      const metadata: CacheMetadata = {
+        createdAt: now,
+        expiresAt: now + CACHE_CONFIG.DEFAULT_EXPIRY,
+        url
+      };
+      fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
+    } catch (error) {
+      console.error(`保存缓存元数据失败: ${error.message}`);
+      // 保存元数据失败不影响主流程
+    }
+  }
+
+  /**
+   * 获取缓存元数据
+   * @param filePath 缓存文件路径
+   * @returns 缓存元数据，如果不存在或解析失败则返回null
+   */
+  private getCacheMetadata(filePath: string): CacheMetadata | null {
+    try {
+      const metadataPath = filePath + '.meta';
+      if (fs.existsSync(metadataPath)) {
+        const metadataContent = fs.readFileSync(metadataPath, 'utf-8');
+        return JSON.parse(metadataContent) as CacheMetadata;
+      }
+    } catch (error) {
+      console.error(`获取缓存元数据失败: ${error.message}`);
+    }
+    return null;
+  }
+
+  /**
+   * 检查缓存是否过期
+   * @param filePath 缓存文件路径
+   * @returns 是否已过期
+   */
+  private isCacheExpired(filePath: string): boolean {
+    const metadata = this.getCacheMetadata(filePath);
+    if (!metadata) {
+      // 没有元数据的旧缓存，默认过期
+      return true;
+    }
+    return Date.now() > metadata.expiresAt;
+  }
+
+  /**
+   * 删除缓存文件及其关联的元数据文件
+   * @param filePath 缓存文件路径
+   */
+  private deleteCacheFile(filePath: string): void {
+    try {
+      // 删除主缓存文件
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+      // 删除ContentType文件
+      const contentTypePath = filePath + '.content-type';
+      if (fs.existsSync(contentTypePath)) {
+        fs.unlinkSync(contentTypePath);
+      }
+      // 删除元数据文件
+      const metadataPath = filePath + '.meta';
+      if (fs.existsSync(metadataPath)) {
+        fs.unlinkSync(metadataPath);
+      }
+      console.log(`已删除缓存文件: ${filePath}`);
+    } catch (error) {
+      console.error(`删除缓存文件失败: ${error.message}`);
+    }
+  }
+
+  /**
+   * 清理过期缓存
+   */
+  private cleanupExpiredCache(): void {
+    console.log('开始清理过期缓存...');
+    try {
+      const files = fs.readdirSync(this.cacheDir);
+      let deletedCount = 0;
+      
+      for (const file of files) {
+        // 只处理主缓存文件，跳过.meta和.content-type文件
+        if (file.endsWith('.meta') || file.endsWith('.content-type')) {
+          continue;
+        }
+        
+        const filePath = path.join(this.cacheDir, file);
+        if (this.isCacheExpired(filePath)) {
+          this.deleteCacheFile(filePath);
+          deletedCount++;
+        }
+      }
+      
+      console.log(`清理完成，共删除 ${deletedCount} 个过期缓存文件`);
+    } catch (error) {
+      console.error(`清理过期缓存失败: ${error.message}`);
+    }
+  }
+
+  /**
+   * 启动定时清理任务
+   */
+  private startCleanupTask(): void {
+    console.log(`启动缓存清理任务，清理间隔: ${CACHE_CONFIG.CLEANUP_INTERVAL / 1000 / 60} 分钟`);
+    setInterval(() => {
+      this.cleanupExpiredCache();
+    }, CACHE_CONFIG.CLEANUP_INTERVAL);
+    
+    // 立即执行一次清理
+    this.cleanupExpiredCache();
+  }
+
+  /**
    * 获取文件信息（返回文件路径，不加载到内存）
    * @param url 要下载的文件URL
    * @returns 返回文件路径和响应头信息
@@ -42,8 +182,8 @@ export class StreamDownloadService {
     // 获取缓存文件路径
     const cacheFilePath = this.getCacheFilePath(url);
     
-    // 检查缓存文件是否存在
-    if (fs.existsSync(cacheFilePath)) {
+    // 检查缓存文件是否存在且未过期
+    if (fs.existsSync(cacheFilePath) && !this.isCacheExpired(cacheFilePath)) {
       console.log(`使用缓存文件: ${cacheFilePath}`);
       const fileStats = fs.statSync(cacheFilePath);
       const contentType = this.getCachedContentType(cacheFilePath) || 'application/octet-stream';
@@ -58,6 +198,10 @@ export class StreamDownloadService {
         },
         contentType,
       };
+    } else if (fs.existsSync(cacheFilePath)) {
+      // 缓存过期，删除过期缓存
+      console.log(`缓存文件已过期，删除: ${cacheFilePath}`);
+      this.deleteCacheFile(cacheFilePath);
     }
 
     // 检查是否正在下载（并发控制）
@@ -163,7 +307,7 @@ export class StreamDownloadService {
               if (response.status >= 400) {
                 writeStream.destroy();
                 fs.unlinkSync(tempFilePath)
-                reject(new HttpException(`下载失败，状态码: ${response.status}`, response.status));
+                reject(new BusinessException('DOWNLOAD_FAILED', `下载失败，状态码: ${response.status}`));
                 return;
               }
 
@@ -215,10 +359,10 @@ export class StreamDownloadService {
     }
 
     // 所有重试都失败
-    if (lastError instanceof HttpException) {
+    if (lastError instanceof BusinessException || lastError instanceof SystemException) {
       throw lastError;
     }
-    throw new HttpException(`下载文件失败（已重试${maxRetries}次）: ${lastError?.message || '未知错误'}`, 500);
+    throw new SystemException('DOWNLOAD_FAILED', `下载文件失败（已重试${maxRetries}次）: ${lastError?.message || '未知错误'}`);
   }
 
   /**
@@ -347,7 +491,7 @@ export class StreamDownloadService {
             passThrough.destroy();
             if (!resolved) {
               resolved = true;
-              reject(new HttpException(`Range请求失败，状态码: ${response.status}`, response.status));
+              reject(new BusinessException('DOWNLOAD_FAILED', `Range请求失败，状态码: ${response.status}`));
             }
             return;
           }
@@ -470,8 +614,8 @@ export class StreamDownloadService {
   }> {
     const cacheFilePath = this.getCacheFilePath(url);
     
-    // 如果缓存存在，直接返回文件流
-    if (fs.existsSync(cacheFilePath)) {
+    // 如果缓存存在且未过期，直接返回文件流
+    if (fs.existsSync(cacheFilePath) && !this.isCacheExpired(cacheFilePath)) {
       console.log(`使用缓存文件: ${cacheFilePath}`);
       // 清理可能存在的残留 Promise（如果文件已经存在，说明下载已完成）
       this.downloadingFiles.delete(cacheFilePath);
@@ -490,6 +634,10 @@ export class StreamDownloadService {
         contentType,
         isCached: true,
       };
+    } else if (fs.existsSync(cacheFilePath)) {
+      // 缓存过期，删除过期缓存
+      console.log(`缓存文件已过期，删除: ${cacheFilePath}`);
+      this.deleteCacheFile(cacheFilePath);
     }
 
     // 缓存不存在，检查是否正在下载
@@ -517,7 +665,7 @@ export class StreamDownloadService {
         } else {
           // 等待完成后文件不存在，清理锁并抛出错误
           this.downloadingFiles.delete(cacheFilePath);
-          throw new HttpException('文件下载完成但文件不存在', 500);
+          throw new SystemException('DOWNLOAD_FAILED', '文件下载完成但文件不存在');
         }
       } catch (error) {
         // 下载失败，清理锁
@@ -594,7 +742,7 @@ export class StreamDownloadService {
             this.downloadingFiles.delete(cacheFilePath);
             if (!resolved) {
               resolved = true;
-              reject(new HttpException(`下载失败，状态码: ${response.status}`, response.status));
+              reject(new BusinessException('DOWNLOAD_FAILED', `下载失败，状态码: ${response.status}`));
             }
             return;
           }
@@ -713,7 +861,7 @@ export class StreamDownloadService {
 
         // 检查响应状态码
         if (response.status >= 400) {
-          throw new HttpException(`下载失败，状态码: ${response.status}`, response.status);
+          throw new BusinessException('DOWNLOAD_FAILED', `下载失败，状态码: ${response.status}`);
         }
 
         // 获取响应头
@@ -721,7 +869,7 @@ export class StreamDownloadService {
         const fileBody = Buffer.from(response.body);
 
         // 保存到缓存（同时保存Content-Type信息）
-        this.saveToCache(cacheFilePath, fileBody, contentType);
+        this.saveToCache(cacheFilePath, fileBody, contentType, url);
 
         console.log(`后台缓存完成: ${cacheFilePath}`);
         return;
@@ -739,10 +887,102 @@ export class StreamDownloadService {
     }
 
     // 所有重试都失败
-    if (lastError instanceof HttpException) {
+    if (lastError instanceof BusinessException || lastError instanceof SystemException) {
       throw lastError;
     }
-    throw new HttpException(`后台下载文件失败（已重试${maxRetries}次）: ${lastError?.message || '未知错误'}`, 500);
+    throw new SystemException('DOWNLOAD_FAILED', `后台下载文件失败（已重试${maxRetries}次）: ${lastError?.message || '未知错误'}`);
+  }
+
+  /**
+   * 获取缓存目录的总大小
+   * @returns 缓存目录大小（字节）
+   */
+  private getCacheSize(): number {
+    let totalSize = 0;
+    
+    try {
+      const files = fs.readdirSync(this.cacheDir);
+      
+      for (const file of files) {
+        // 只计算主缓存文件的大小，跳过.meta和.content-type文件
+        if (file.endsWith('.meta') || file.endsWith('.content-type')) {
+          continue;
+        }
+        
+        const filePath = path.join(this.cacheDir, file);
+        const stats = fs.statSync(filePath);
+        totalSize += stats.size;
+      }
+    } catch (error) {
+      console.error(`计算缓存大小失败: ${error.message}`);
+    }
+    
+    return totalSize;
+  }
+
+  /**
+   * 按LRU原则清理旧缓存
+   * @param targetSize 目标大小（清理后缓存大小不超过此值）
+   */
+  private cleanupCacheByLRU(targetSize: number): void {
+    console.log(`开始按LRU原则清理缓存，目标大小: ${targetSize} 字节`);
+    
+    try {
+      const files = fs.readdirSync(this.cacheDir);
+      const cacheFiles: Array<{ filePath: string; createdAt: number; size: number }> = [];
+      
+      // 收集所有主缓存文件及其创建时间和大小
+      for (const file of files) {
+        if (file.endsWith('.meta') || file.endsWith('.content-type')) {
+          continue;
+        }
+        
+        const filePath = path.join(this.cacheDir, file);
+        const metadata = this.getCacheMetadata(filePath);
+        const stats = fs.statSync(filePath);
+        
+        cacheFiles.push({
+          filePath,
+          createdAt: metadata?.createdAt || 0,
+          size: stats.size
+        });
+      }
+      
+      // 按创建时间排序（旧的在前，新的在后）
+      cacheFiles.sort((a, b) => a.createdAt - b.createdAt);
+      
+      let currentSize = this.getCacheSize();
+      let deletedCount = 0;
+      
+      // 开始清理旧文件，直到达到目标大小
+      for (const cacheFile of cacheFiles) {
+        if (currentSize <= targetSize) {
+          break;
+        }
+        
+        this.deleteCacheFile(cacheFile.filePath);
+        currentSize -= cacheFile.size;
+        deletedCount++;
+      }
+      
+      console.log(`LRU清理完成，共删除 ${deletedCount} 个文件，当前缓存大小: ${currentSize} 字节`);
+    } catch (error) {
+      console.error(`LRU清理缓存失败: ${error.message}`);
+    }
+  }
+
+  /**
+   * 检查并清理超出大小限制的缓存
+   */
+  private checkAndCleanupCacheSize(): void {
+    const currentSize = this.getCacheSize();
+    console.log(`当前缓存大小: ${currentSize} 字节，限制: ${CACHE_CONFIG.MAX_SIZE} 字节`);
+    
+    if (currentSize > CACHE_CONFIG.MAX_SIZE) {
+      // 清理到限制大小的80%
+      const targetSize = Math.floor(CACHE_CONFIG.MAX_SIZE * 0.8);
+      this.cleanupCacheByLRU(targetSize);
+    }
   }
 
   /**
@@ -750,8 +990,9 @@ export class StreamDownloadService {
    * @param filePath 文件路径
    * @param content 文件内容
    * @param contentType Content-Type
+   * @param url 原始URL
    */
-  private saveToCache(filePath: string, content: Buffer, contentType: string) {
+  private saveToCache(filePath: string, content: Buffer, contentType: string, url: string): void {
     try {
       // 保存文件内容
       fs.writeFileSync(filePath, content);
@@ -760,6 +1001,12 @@ export class StreamDownloadService {
       // 保存Content-Type信息到单独文件
       const contentTypePath = filePath + '.content-type';
       fs.writeFileSync(contentTypePath, contentType);
+      
+      // 保存元数据
+      this.saveCacheMetadata(filePath, url);
+      
+      // 检查并清理超出大小限制的缓存
+      this.checkAndCleanupCacheSize();
     } catch (error) {
       console.error(`保存缓存文件失败: ${error.message}`);
       throw error;

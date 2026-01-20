@@ -1,8 +1,10 @@
-import {  HttpException, Injectable } from '@nestjs/common';
+import {  Injectable, Logger } from '@nestjs/common';
+import { BusinessException, SystemException } from '../../common/utils/custom.exception';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { ParseWatermarkDto } from '../../dto/rwatermark.dto';
+import { ParseWatermarkDto } from '../dto/rwatermark.dto';
+
 
 import * as superagent from 'superagent';
 import { XhsService } from './xhs.service';
@@ -12,6 +14,7 @@ import { BilibiliService } from './bilibili.service';
 import { DouyinV2Service } from './douyinV2.service';
 import { ToutiaoService } from './toutiao.service';
 import { TwitterService } from './twitter.service';
+import { RedisService } from '../../cache/services/redis.service';
 @Injectable()
 export class RWatermarkService {
       // 缓存目录路径
@@ -19,9 +22,12 @@ export class RWatermarkService {
       
       // 下载锁：存储正在下载的文件，key为文件路径，value为下载Promise
       private readonly downloadingFiles = new Map<string, Promise<{ body: Buffer; headers: any; contentType: string }>>();
+      
+      // 日志实例
+      private readonly logger = new Logger(RWatermarkService.name);
 
       constructor(
-  
+        private redisService:RedisService,
         private xhsService:XhsService,
         private kuaishouService:KuaishouService,
         private weiboService:WeiboService,
@@ -44,46 +50,51 @@ export class RWatermarkService {
     }
      async parseWatermark(body:ParseWatermarkDto):Promise<any>{
         console.log("body",body);
+        
+        // 生成缓存键
+        const cacheKey = this.redisService.generateCacheKey('parse_result', body.url);
+        
+        // 检查Redis缓存
+        const cachedResult = await this.redisService.get<any>(cacheKey);
+        if (cachedResult) {
+          console.log(`使用Redis缓存结果: ${cacheKey}`);
+          return cachedResult;
+        }
+        
+        let res: any;
         let matchResult =  body.url.match(/https?:\/\/v\.douyin\.com\/[a-zA-Z0-9_\-\/]+/);
         console.log("matchResult",matchResult);
         if(matchResult && matchResult[0]){
-          let res = await this.douyinV2Service.parseWatermark(matchResult[0],body.openid,body.url);
-          return res; 
+          res = await this.douyinV2Service.parseWatermark(matchResult[0],body.openid,body.url);
         }
         //🤰🏻孕26w｜日渐圆润的小腹婆幸福日常💖 现在已经胖到... http://xhslink.com/o/5rq6q20WQmz 复制后打开【小红书】查看笔记！
         matchResult =  body.url.match(/https?:\/\/xhslink\.com\/o\/[a-zA-Z0-9_\-\/]+/);
         if(matchResult && matchResult[0]){
           console.log("matchResult",matchResult);
-          let res = await this.xhsService.parseWatermark(matchResult[0],body.openid,body.url);
-          return res; 
+          res = await this.xhsService.parseWatermark(matchResult[0],body.openid,body.url);
         }
         matchResult =  body.url.match(/https?:\/\/v\.kuaishou\.com\/[a-zA-Z0-9_\-\/]+/);
         if(matchResult && matchResult[0]){
-          let res = await this.kuaishouService.parseWatermark(matchResult[0],body.openid,body.url);
-          return res; 
+          res = await this.kuaishouService.parseWatermark(matchResult[0],body.openid,body.url);
         }
         // https://video.weibo.com/show?fid=1034:5250750989926459
         matchResult =  body.url.match(/https?:\/\/video\.weibo\.com\/show\?fid=[a-zA-Z0-9_\-\/\:]+/);
         if(matchResult && matchResult[0]){
-          let res = await this.weiboService.parseWatermark(matchResult[0],body.openid,body.url);
-          return res; 
+          res = await this.weiboService.parseWatermark(matchResult[0],body.openid,body.url);
         }
         matchResult =  body.url.match(/https?:\/\/www\.bilibili\.com\/video\/[a-zA-Z0-9_\-\/]+/);
         if(matchResult && matchResult[0]){
-          let res = await this.bilibiliService.parseWatermark(matchResult[0],body.openid,body.url);
-          return res; 
+          res = await this.bilibiliService.parseWatermark(matchResult[0],body.openid,body.url);
         }
         // 【" 昨晚party那只鸡应该不超过200块吧 ! 那你都能吃得下啊 ! "-哔哩哔哩】 https://b23.tv/rj4fIGJ
         matchResult =  body.url.match(/https?:\/\/b23\.tv\/[a-zA-Z0-9_\-\/]+/);
         if(matchResult && matchResult[0]){
-          let res = await this.bilibiliService.parseWatermark(matchResult[0],body.openid,body.url);
-          return res; 
+          res = await this.bilibiliService.parseWatermark(matchResult[0],body.openid,body.url);
         }
         matchResult =  body.url.match(/https?:\/\/m\.toutiao\.com\/is\/[a-zA-Z0-9_\-\/]+/);
         console.log("matchResult",matchResult)
         if(matchResult && matchResult[0]){
-          let res = await this.toutiaoService.parseWatermark(matchResult[0],body.openid,body.url);
-          return res; 
+          res = await this.toutiaoService.parseWatermark(matchResult[0],body.openid,body.url);
         }
         // matchResult =  body.url.match(/https?:vixiguacom[a-zA-Z0-9_]+/);
         // if(matchResult && matchResult[0]){
@@ -94,12 +105,19 @@ export class RWatermarkService {
         // Twitter/X平台支持
         matchResult =  body.url.match(/https?:\/\/(?:twitter|x)\.com\/[a-zA-Z0-9_]+\/status\/[0-9]+/);
         if(matchResult && matchResult[0]){
-          let res = await this.twitterService.parseWatermark(matchResult[0],body.openid,body.url);
-          return res; 
+          res = await this.twitterService.parseWatermark(matchResult[0],body.openid,body.url);
         }
 
         // 没有匹配到任何支持的平台
-        throw new HttpException('不支持的平台链接', 400);
+        if (!res) {
+          throw new BusinessException('UNSUPPORTED_PLATFORM');
+        }
+        
+        // 将结果存入Redis，设置24小时过期
+        await this.redisService.set(cacheKey, res, 86400);
+        console.log(`结果已存入Redis缓存: ${cacheKey}`);
+        
+        return res;
      }
  
    /**
@@ -201,7 +219,7 @@ export class RWatermarkService {
             const response = await request.ok(() => true); // 允许所有状态码;
           // 检查响应状态码
           if (response.status >= 400) {
-            throw new HttpException(`下载失败，状态码: ${response.status}`, response.status);
+            throw new BusinessException('DOWNLOAD_FAILED', `下载失败，状态码: ${response.status}`);
           }
 
           // 获取响应头
@@ -211,7 +229,7 @@ export class RWatermarkService {
           const fileBody = Buffer.from(response.body);
 
           // 保存到缓存（同时保存Content-Type信息）
-          this.saveToCache(cacheFilePath, fileBody, contentType);
+          this.saveToCache(cacheFilePath, fileBody, contentType, url);
 
           return {
             body: fileBody,
@@ -236,10 +254,10 @@ export class RWatermarkService {
       }
 
       // 所有重试都失败
-      if (lastError instanceof HttpException) {
+      if (lastError instanceof BusinessException || lastError instanceof SystemException) {
         throw lastError;
       }
-      throw new HttpException(`下载文件失败（已重试${maxRetries}次）: ${lastError?.message || '未知错误'}`, 500);
+      throw new SystemException('DOWNLOAD_FAILED', `下载文件失败（已重试${maxRetries}次）: ${lastError?.message || '未知错误'}`);
     }
 
     /**
@@ -280,8 +298,9 @@ export class RWatermarkService {
      * @param filePath 文件路径
      * @param content 文件内容
      * @param contentType Content-Type
+     * @param url 原始URL
      */
-    private saveToCache(filePath: string, content: Buffer, contentType: string) {
+    private saveToCache(filePath: string, content: Buffer, contentType: string, url: string) {
       try {
         // 保存文件内容
         fs.writeFileSync(filePath, content);
@@ -290,6 +309,16 @@ export class RWatermarkService {
         // 保存Content-Type信息到单独文件
         const contentTypePath = filePath + '.content-type';
         fs.writeFileSync(contentTypePath, contentType);
+        
+        // 保存元数据（用于缓存过期检查）
+        const metadataPath = filePath + '.meta';
+        const now = Date.now();
+        const metadata = {
+          createdAt: now,
+          expiresAt: now + 7 * 24 * 60 * 60 * 1000, // 7天过期
+          url
+        };
+        fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
       } catch (error) {
         console.error(`保存缓存文件失败: ${error.message}`);
         // 不抛出错误，允许继续执行

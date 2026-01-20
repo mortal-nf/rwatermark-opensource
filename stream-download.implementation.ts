@@ -15,7 +15,8 @@ import { PassThrough } from 'stream';
  */
 @Injectable()
 export class StreamDownloadService {
-  private readonly cacheDir: string=path.join(__dirname,"../../../", 'shortVideos');
+  // 将缓存目录设置为项目内部的shortVideos目录
+  private readonly cacheDir: string=path.join(__dirname, 'shortVideos');
   private readonly downloadingFiles = new Map<string, Promise<void>>();
 
   constructor() {

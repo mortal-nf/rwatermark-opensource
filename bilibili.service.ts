@@ -2,10 +2,7 @@
  * bilibili视频解析服务
  */
 import { BadRequestException, HttpException, Injectable } from '@nestjs/common';
-import { In, IsNull, Repository } from 'typeorm';
-import { InjectRepository } from '@nestjs/typeorm';
 import * as superagent from 'superagent';
-import { ShortVideoEntity } from './entities/shortVideo.entity';
 
 interface BilibiliApiResponse {
   code: number | string;
@@ -48,22 +45,12 @@ export class BilibiliService {
       headers = {
             'User-Agent': `Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1 Edg/122.0.0.0`
       }
-      constructor(
-        @InjectRepository(ShortVideoEntity)
-        private shortVideoRepository:Repository<ShortVideoEntity>,
-        
-    ) {}
+      constructor() {}
     log(...args:any[]){
         console.log("bilibili:",...args);
     }
     async parseWatermark(url:string,openid:string,originUrl:string){
         console.log("url",url);
-        let shortVideo = new ShortVideoEntity();
-        shortVideo.type="bilibili";
-        shortVideo.openid = openid;
-        shortVideo.contentType="video";
-        shortVideo.status=0;
-        shortVideo.originUrl=originUrl;
         let cleanedUrl = this.cleanUrlParameters(url);
         console.log("url",url);
         let parsedUrl: URL;
@@ -71,9 +58,6 @@ export class BilibiliService {
             parsedUrl = new URL(cleanedUrl);
         } catch (error) {
             this.log("error",error);
-            shortVideo.status=2;
-            shortVideo.msg="视频链接不正确";
-            await this.shortVideoRepository.save(shortVideo);
             throw new BadRequestException('视频链接不正确');
         }
         let bvid = '';
@@ -93,26 +77,17 @@ export class BilibiliService {
             bvid = parsedUrl.pathname.replace(/\/$/, '');
             } catch (error) {
                 this.log("error",error);
-                shortVideo.status=2;
-                shortVideo.msg="无法获取重定向 URL";
-                await this.shortVideoRepository.save(shortVideo);
                 throw new BadRequestException('无法获取重定向 URL');
             }
         } else if (parsedUrl.hostname === 'www.bilibili.com' || parsedUrl.hostname === 'm.bilibili.com') {
             bvid = parsedUrl.pathname;
         } else {
             this.log("视频链接好像不太对！");
-            shortVideo.status=2;
-            shortVideo.msg="视频链接好像不太对！";
-            await this.shortVideoRepository.save(shortVideo);
             throw new BadRequestException('视频链接好像不太对！');
         }
         // 检查是否是视频链接
   if (!bvid.includes('/video/')) {
     this.log("好像不是视频链接");
-    shortVideo.status=2;
-    shortVideo.msg="好像不是视频链接";
-    await this.shortVideoRepository.save(shortVideo);
     throw new BadRequestException('好像不是视频链接');
   }
 
@@ -138,9 +113,6 @@ export class BilibiliService {
             array = JSON.parse(json1);
         } catch (error) {
             this.log("error",error);
-            shortVideo.status=2;
-            shortVideo.msg="解析失败！JSON 解析错误";
-            await this.shortVideoRepository.save(shortVideo);
             throw new BadRequestException('解析失败！JSON 解析错误');
         }
         console.log("array",array);
@@ -202,47 +174,30 @@ export class BilibiliService {
             }
             }
 
-            // 根据是否有多个分P构建不同的返回结构
-            if (videos.length > 1) {
-                shortVideo.status=1;
-                shortVideo.msg="解析成功！";
-                shortVideo.content={
-                    title,
-                    cover,
-                    description: desc,
-                    url: lastVideoUrl,
-                    user: {
-                        name: owner.name || '',
-                        avatar: owner.face || ''
-                    },
-                    videos,
-                    totalVideos: videos.length
-                }
-                await this.shortVideoRepository.save(shortVideo);
-                
-            } else {
-                shortVideo.status=1;
-                shortVideo.msg="解析成功！";
-                shortVideo.content={
-                    title,
-                    cover,
-                    description: desc,
-                    url: lastVideoUrl,
-                    user: {
-                        name: owner.name || '',
-                        avatar: owner.face || ''
-                    },
-                    videos,
-                    totalVideos: videos.length
-                }
-                await this.shortVideoRepository.save(shortVideo);
-            }
-            return {id:shortVideo.id};
+            // 构建返回结果
+            const content = {
+                title,
+                cover,
+                description: desc,
+                url: lastVideoUrl,
+                user: {
+                    name: owner.name || '',
+                    avatar: owner.face || ''
+                },
+                videos,
+                totalVideos: videos.length
+            };
+            
+            return {
+                type: "bilibili",
+                openid,
+                contentType: "video",
+                status: 1,
+                originUrl,
+                content
+            };
         } else {
             this.log("解析失败！");
-            shortVideo.status=2;
-            shortVideo.msg="解析失败！";
-            await this.shortVideoRepository.save(shortVideo);
             throw new BadRequestException('解析失败！');
         }
     }

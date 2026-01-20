@@ -2,10 +2,7 @@
  * 快手视频解析服务
  */
 import { BadRequestException, HttpException, Injectable } from '@nestjs/common';
-import { In, IsNull, Repository } from 'typeorm';
-import { InjectRepository } from '@nestjs/typeorm';
 import * as superagent from 'superagent';
-import { ShortVideoEntity } from './entities/shortVideo.entity';
 
 interface KuaishouData {
   author?: string;
@@ -30,22 +27,12 @@ export class KuaishouService {
       headers = {
             'User-Agent': `Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1 Edg/122.0.0.0`
       }
-      constructor(
-        @InjectRepository(ShortVideoEntity)
-        private shortVideoRepository:Repository<ShortVideoEntity>,
-        
-    ) {}
+      constructor() {}
     log(...args:any[]){
         console.log("kuaishou:",...args);
     }
     async parseWatermark(url:string,openid:string,originUrl:string){
         console.log("url",url);
-        let shortVideo = new ShortVideoEntity();
-        shortVideo.type="kuaishou";
-        shortVideo.openid = openid;
-        shortVideo.contentType="video";
-        shortVideo.status=0;
-        shortVideo.originUrl=originUrl;
         let response = await superagent
         .get(url)
         .redirects(1000)
@@ -56,7 +43,7 @@ export class KuaishouService {
             decoded = JSON.parse(matches[1]);
             } catch (error) {
             console.error('JSON 解析失败:', error instanceof Error ? error.message : String(error));
-            return null;
+            throw new BadRequestException('JSON 解析失败');
             }
         // console.log("text",text);
         let data = null;
@@ -66,10 +53,7 @@ export class KuaishouService {
             }
         }
         if(!data){
-            shortVideo.status=2;
-            shortVideo.msg="解析失败";
-            await this.shortVideoRepository.save(shortVideo);
-            return null;
+            throw new BadRequestException('解析失败');
         }
         let content:KuaishouData={
             // author: data.userName,
@@ -99,19 +83,17 @@ export class KuaishouService {
         content.cover = data.coverUrls?.[0]?.url;
         content.url = data.mainMvUrls?.[0]?.url;
         content.avatar = data.headUrl;
-        shortVideo.content=content;
-        // shortVideo.
-        if(data.photoType!="VIDEO"){
-            shortVideo.status=1;
-            shortVideo.contentType="image";
-            shortVideo = await this.shortVideoRepository.save(shortVideo);
-            return {id:shortVideo.id};
-        }
-
-        shortVideo.status=1;
-        shortVideo.msg="解析成功";
-        shortVideo = await this.shortVideoRepository.save(shortVideo);
-        return {id:shortVideo.id};
+        
+        const contentType = data.photoType !== "VIDEO" ? "image" : "video";
+        
+        return {
+            type: "kuaishou",
+            openid,
+            contentType,
+            status: 1,
+            originUrl,
+            content
+        };
     }
 
 }

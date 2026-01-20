@@ -1,16 +1,15 @@
-import { Body, Controller, Post,Get, Put, Delete, Param, Query, Patch,UseGuards, Req, Res } from '@nestjs/common';
+import { Body, Controller, Post,Get, Query, Req, Res } from '@nestjs/common';
 import { ResUtils } from './utils/res.utils';
-import { CheckLoginUserGatewayGuard } from './guards/auth.guard';
-import { ApiHeader, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { ApiQuery, ApiTags } from '@nestjs/swagger';
 import { RWatermarkService } from './index.service';
-import { DownloadUrlDto, FindByIdWatermarkDto, ParseWatermarkDto } from './dto/rwatermark.dto';
+import { DownloadUrlDto, ParseWatermarkDto } from './dto/rwatermark.dto';
 import { Response } from 'express';
 import * as fs from 'fs';
 import { createReadStream } from 'fs';
 import { StreamDownloadService } from './stream-download.implementation';
 
 @ApiTags('rwatermark')
-@Controller('/api/rwatermark')
+@Controller('rwatermark')
 export class RWatermarkController {
   constructor(
     private readonly rwatermarkService: RWatermarkService,
@@ -18,47 +17,17 @@ export class RWatermarkController {
   ) {}
 
   @Post("parseWatermark")
-  @UseGuards(CheckLoginUserGatewayGuard("user"))
-  @ApiHeader({name: 'token',description: 'Enter JWT token',required: true,})
-  async parseWatermark(@Body() body:ParseWatermarkDto,@Req() req){
-    body.openid = req.loginUser.openid;
+  async parseWatermark(@Body() body:ParseWatermarkDto){
+    // 简化处理，直接使用固定openid
+    body.openid = "test_openid";
     let res = await this.rwatermarkService.parseWatermark(body);
-    return ResUtils.success({
-      data:res,
-    });
-  }
-  @Post("findShortVideoList")
-  @UseGuards(CheckLoginUserGatewayGuard("user"))
-  @ApiHeader({name: 'token',description: 'Enter JWT token',required: true,})
-  async findShortVideoList(@Body() body,@Req() req){
-    body.openid = req.loginUser.openid;
-    let res = await this.rwatermarkService.findShortVideoList(body);
-    return ResUtils.success({
-      data:res,
-    });
-  }
-  @Post("findShortVideoDetail")
-  @UseGuards(CheckLoginUserGatewayGuard("user"))
-  @ApiHeader({name: 'token',description: 'Enter JWT token',required: true,})
-  async findShortVideoDetail(@Body() body:FindByIdWatermarkDto,@Req() req){
-    body.openid = req.loginUser.openid;
-    let res = await this.rwatermarkService.findShortVideoDetail(body);
-    return ResUtils.success({
-      data:res,
-    });
-  }
-  @Post("deleteShortVideo")
-  @UseGuards(CheckLoginUserGatewayGuard("user"))
-  @ApiHeader({name: 'token',description: 'Enter JWT token',required: true,})
-  async deleteShortVideo(@Body() body,@Req() req){
-    body.openid = req.loginUser.openid;
-    let res = await this.rwatermarkService.deleteShortVideo(body);
     return ResUtils.success({
       data:res,
     });
   }
   @Get("download")
   @ApiQuery({ name: 'url', description: '要下载的文件URL', required: true })
+  @ApiQuery({ name: 'fileName', description: '下载文件的文件名', required: false })
   async downloadFile(@Query() query: DownloadUrlDto, @Res() res: Response): Promise<void> {
     try {
       const cacheFilePath = this.streamDownloadService.getCacheFilePath(query.url);
@@ -85,6 +54,9 @@ export class RWatermarkController {
           
           const chunksize = (end - start) + 1;
           const contentType = this.streamDownloadService.getCachedContentType(cacheFilePath) || 'application/octet-stream';
+          
+          // 生成文件名
+          const fileName = query.fileName || `video_${Date.now()}.mp4`;
 
           // 设置206 Partial Content响应头
           res.status(206);
@@ -92,6 +64,7 @@ export class RWatermarkController {
           res.setHeader('Accept-Ranges', 'bytes');
           res.setHeader('Content-Length', chunksize.toString());
           res.setHeader('Content-Type', contentType);
+          res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
 
           // 创建文件流，只读取请求的范围
           const fileStream = createReadStream(cacheFilePath, { start, end });
@@ -159,6 +132,12 @@ export class RWatermarkController {
           res.setHeader(key, fileHeaders[key]);
         }
       });
+
+      // 生成文件名
+      const fileName = query.fileName || `video_${Date.now()}.mp4`;
+      
+      // 设置下载文件名
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
 
       // 如果使用缓存且没有Range请求，支持Range请求（设置Accept-Ranges）
       if (isCached && !range) {

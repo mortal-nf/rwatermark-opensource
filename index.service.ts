@@ -1,13 +1,9 @@
 import {  HttpException, Injectable } from '@nestjs/common';
-import { Cron } from '@nestjs/schedule';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { FindOptionsWhere, In, IsNull, Repository } from 'typeorm';
-import { InjectRepository } from '@nestjs/typeorm';
 import { ParseWatermarkDto } from './dto/rwatermark.dto';
 import { VDouyinService } from './vdouyin.service';
-import { ShortVideoEntity } from './entities/shortVideo.entity';
 import * as superagent from 'superagent';
 import { XhsService } from './xhs.service';
 import { KuaishouService } from './kuaishou.service';
@@ -15,24 +11,24 @@ import { WeiboService } from './weibo.service';
 import { BilibiliService } from './bilibili.service';
 import { DouyinV2Service } from './douyinV2.service';
 import { ToutiaoService } from './toutiao.service';
+import { TwitterService } from './twitter.service';
 @Injectable()
 export class RWatermarkService {
       // 缓存目录路径
-      private readonly cacheDir = path.join(__dirname,"../../../", 'shortVideos');
+      private readonly cacheDir = path.join(__dirname, 'shortVideos');
       
       // 下载锁：存储正在下载的文件，key为文件路径，value为下载Promise
       private readonly downloadingFiles = new Map<string, Promise<{ body: Buffer; headers: any; contentType: string }>>();
 
       constructor(
-         @InjectRepository(ShortVideoEntity)
-        private shortVideoRepository:Repository<ShortVideoEntity>,
         private vdouyinService:VDouyinService,
         private xhsService:XhsService,
         private kuaishouService:KuaishouService,
         private weiboService:WeiboService,
         private bilibiliService:BilibiliService,
         private douyinV2Service:DouyinV2Service,
-        private toutiaoService:ToutiaoService
+        private toutiaoService:ToutiaoService,
+        private twitterService:TwitterService
     ) {
       // 确保缓存目录存在
       this.ensureCacheDir();
@@ -89,46 +85,23 @@ export class RWatermarkService {
           let res = await this.toutiaoService.parseWatermark(matchResult[0],body.openid,body.url);
           return res; 
         }
-        // matchResult =  body.url.match(/https?:\/\/v\.ixigua\.com\/[a-zA-Z0-9_\-\/]+/);
+        // matchResult =  body.url.match(/https?:vixiguacom[a-zA-Z0-9_]+/);
         // if(matchResult && matchResult[0]){
         //   let res = await this.xiguaService.parseWatermark(matchResult[0],body.openid,body.url);
         //   return res; 
         // }
-      //   let url = matchResult[0];
-        return null;
-     }
-     async findShortVideoDetail(body){
-       let res = await this.shortVideoRepository.findOne({
-        where:{
-          id:body.id,
+        
+        // Twitter/X平台支持
+        matchResult =  body.url.match(/https?:\/\/(?:twitter|x)\.com\/[a-zA-Z0-9_]+\/status\/[0-9]+/);
+        if(matchResult && matchResult[0]){
+          let res = await this.twitterService.parseWatermark(matchResult[0],body.openid,body.url);
+          return res; 
         }
-       })
-       return res;
+
+        // 没有匹配到任何支持的平台
+        throw new HttpException('不支持的平台链接', 400);
      }
-     async findShortVideoList(body){
-      let rows = await this.shortVideoRepository.find({
-        where:{
-          openid:body.openid,
-          deletedAt:IsNull(),
-        },
-        order:{
-          createdAt:'DESC',
-        }
-      })
-      return {rows};
-     }
-     async deleteShortVideo(body){
-      let whereObj:FindOptionsWhere<ShortVideoEntity> = {}
-      if(body.id){
-        whereObj.id = body.id;
-      }
-      whereObj.openid = body.openid;
-      whereObj.deletedAt = IsNull(); //未删除
-      await this.shortVideoRepository.update(whereObj,{
-        deletedAt:new Date(),
-      });
-      return true;
-    }
+ 
    /**
      * 转发下载文件（带缓存和重试机制）
      * @param url 要下载的文件URL
@@ -337,64 +310,7 @@ export class RWatermarkService {
       }
     }
 
-    /**
-     * 定时任务：删除超过24小时的文件
-     * 每小时执行一次
-     */
-    @Cron('0 0 * * * *') // 每小时的第0分钟执行
-    async cleanExpiredFiles() {
-      try {
-        console.log('开始清理过期文件...');
-        const deletedCount = await this.deleteExpiredFiles(24);
-        console.log(`清理完成，删除了 ${deletedCount} 个过期文件`);
-      } catch (error) {
-        console.error('清理过期文件失败:', error.message);
-      }
-    }
 
-    /**
-     * 删除超过指定小时数的文件
-     * @param hours 小时数，默认24小时
-     * @returns 删除的文件数量
-     */
-    async deleteExpiredFiles(hours: number = 24): Promise<number> {
-      if (!fs.existsSync(this.cacheDir)) {
-        return 0;
-      }
-
-      const files = fs.readdirSync(this.cacheDir);
-      const now = Date.now();
-      const expireTime = hours * 60 * 60 * 1000; // 转换为毫秒
-      let deletedCount = 0;
-
-      for (const file of files) {
-        const filePath = path.join(this.cacheDir, file);
-        
-        try {
-          const stats = fs.statSync(filePath);
-          
-          // 跳过目录
-          if (stats.isDirectory()) {
-            continue;
-          }
-
-          // 计算文件年龄（毫秒）
-          const fileAge = now - stats.mtime.getTime();
-
-          // 如果文件超过指定时间，删除它
-          if (fileAge > expireTime) {
-            fs.unlinkSync(filePath);
-            deletedCount++;
-            console.log(`已删除过期文件: ${filePath}`);
-          }
-        } catch (error) {
-          console.error(`删除文件失败 ${filePath}:`, error.message);
-          // 继续处理其他文件
-        }
-      }
-
-      return deletedCount;
-    }
 }
 
 

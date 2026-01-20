@@ -2,10 +2,7 @@
  * 抖音视频解析服务
  */
 import { HttpException, Injectable, OnModuleInit } from '@nestjs/common';
-import { Repository } from 'typeorm';
-import { InjectRepository } from '@nestjs/typeorm';
 import * as superagent from 'superagent';
-import { ShortVideoEntity } from './entities/shortVideo.entity';
 import { Browser, Page } from 'puppeteer-core';
 import { getBrowser } from './puppeteer/puppeteer';
 
@@ -18,18 +15,10 @@ export class DouyinV2Service implements OnModuleInit {
       headers = {
             'User-Agent': `Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1 Edg/122.0.0.0`
       }
-      constructor(
-        @InjectRepository(ShortVideoEntity)
-        private shortVideoRepository:Repository<ShortVideoEntity>,
-        
-    ) {}
+      constructor() {}
     async onModuleInit(){
         console.log("DouyinV2Service onModuleInit");
-        if(process.env.NODE_ENV=='local'){
-            return null;
-        }
-        // this.initBrowser();
-        
+        await this.initBrowser();
     }
     async initBrowser(){
        this.browser = await getBrowser(true);
@@ -168,12 +157,6 @@ export class DouyinV2Service implements OnModuleInit {
             throw new Error("browser not found");
         }
         let page: Page | null = null;
-        let shortVideo = new ShortVideoEntity();
-        shortVideo.type="douyin";
-        shortVideo.openid = openid;
-        shortVideo.contentType="video";
-        shortVideo.status=0;
-        shortVideo.originUrl=originUrl;
         let id = await this.extractId(url);
         try{
             this.log("id:",id);
@@ -219,7 +202,7 @@ export class DouyinV2Service implements OnModuleInit {
                                 this.log(`响应状态异常: ${response2.status()} ${response2.statusText()}`);
                                 throw new HttpException(`请求失败，状态码: ${response2.status()}`, response2.status());
                             }
-                            textData = await response2.text();                                                        
+                            textData = await response2.text();                                                         
                             this.log(`响应文本长度: ${textData ? textData.length : 0}, 重试次数: ${retryCount}`);
                             this.log(`响应文本: ${textData}`);
                             // 如果文本不为空，跳出循环
@@ -273,14 +256,13 @@ export class DouyinV2Service implements OnModuleInit {
                         this.log("响应数据无效或缺少 aweme_detail");
                         throw new HttpException('响应数据无效', 500);
                     }
-                    await page.close();
                     // console.log("data", JSON.stringify(data));
                     // let res = await superagent.get(url).redirects(3);
                     // console.log(res.text);
                     // 发送请求获取视频信息
                     // console.log("data", JSON.stringify(data));
                  
-                    shortVideo.content={
+                    const videoContent={
                         author: data.aweme_detail.video?.nickname || '',
                         uid: data.aweme_detail.author?.sec_uid || '',
                         avatar: data.aweme_detail.author?.avatar_thumb?.url_list?.[0] || '',
@@ -299,13 +281,14 @@ export class DouyinV2Service implements OnModuleInit {
                             url: data.aweme_detail?.music?.play_url?.url_list?.[0] || '',
                         }
                     };
-                    shortVideo.status=1;
-                    shortVideo = await this.shortVideoRepository.save(shortVideo);
                     return {
-                        id:shortVideo.id,
+                        type: "douyin",
+                        contentType: "video",
+                        status: 1,
+                        originUrl: originUrl,
+                        content: videoContent
                     };
             }
-            await page.close();
         }catch(err){
             this.log('parseWatermark error:', err);
             throw err;
@@ -316,10 +299,7 @@ export class DouyinV2Service implements OnModuleInit {
         }
         
         if(!id){
-            shortVideo.msg="视频ID不存在";
-            shortVideo.status=2;
-            await this.shortVideoRepository.save(shortVideo);
-            return null;
+            throw new HttpException('视频ID不存在', 400);
         }
         const response = await (await superagent.post('https://www.iesdouyin.com/share/video/' + id).set(this.headers));
         // console.log(response.text);
@@ -328,40 +308,26 @@ export class DouyinV2Service implements OnModuleInit {
         const matches = response.text.match(pattern);
 
         if (!matches || !matches[1]) {
-            shortVideo.msg="解析数据失败";
-            shortVideo.status=2
-            await this.shortVideoRepository.save(shortVideo);
-            return null;
+            throw new HttpException('解析数据失败', 500);
         }
          let videoInfo: any;
         try {
             videoInfo = JSON.parse(matches[1].trim());
         } catch (error) {
             console.log('JSON 解析失败: ' + (error instanceof Error ? error.message : String(error)));
-            shortVideo.status=2
-            shortVideo.msg="JSON 解析失败: " + (error instanceof Error ? error.message : String(error));
-            await this.shortVideoRepository.save(shortVideo);
-            return null;
-            // return { code: 201, msg: 'JSON 解析失败: ' + (error instanceof Error ? error.message : String(error)) };
+            throw new HttpException(`JSON 解析失败: ${error instanceof Error ? error.message : String(error)}`, 500);
         }
         // console.log(videoInfo);
 
         if (!videoInfo?.loaderData) {
             console.log('数据查找失败' + response );
-            shortVideo.status=2
-            shortVideo.msg="数据查找失败" + response;
-            await this.shortVideoRepository.save(shortVideo);
-            return null;
+            throw new HttpException('数据查找失败', 500);
         }
 
         const itemList = videoInfo.loaderData['video_(id)/page']?.videoInfoRes?.item_list?.[0];
         if (!itemList) {
             console.log("视频信息不存在")
-            shortVideo.status=2
-            shortVideo.msg="视频信息不存在";
-            await this.shortVideoRepository.save(shortVideo);
-            return null;
-            // return { code: 201, msg: '视频信息不存在' };
+            throw new HttpException('视频信息不存在', 400);
         }
 
         // 替换 "playwm" 为 "play" 获取无水印视频 URL
@@ -398,14 +364,12 @@ export class DouyinV2Service implements OnModuleInit {
         // 检查是否有视频或图片
         if (!videoResUrl && imgurl.length === 0) {
             console.log('当前分享链接已失效！');
-            shortVideo.status=2
-            shortVideo.msg="当前分享链接已失效！";
-            await this.shortVideoRepository.save(shortVideo);
-            return null;
+            throw new HttpException('当前分享链接已失效！', 400);
         }
 
         // 构造返回数据
-        shortVideo.content={
+        const contentType = imgurl.length > 0 ? 'image' : 'video';
+        const videoContent={
             author: itemList.author?.nickname || '',
             uid: itemList.author?.unique_id || '',
             avatar: itemList.author?.avatar_medium?.url_list?.[0] || '',
@@ -419,13 +383,13 @@ export class DouyinV2Service implements OnModuleInit {
                 : videoResUrl,
             music: music || '音乐为视频原声',
         };
-        if(imgurl.length > 0){
-            shortVideo.contentType='image';
-        }
-        shortVideo.status=1;
-        shortVideo = await this.shortVideoRepository.save(shortVideo);
         return {
-            id:shortVideo.id,
+            type: "douyin",
+            openid,
+            contentType,
+            status: 1,
+            originUrl,
+            content: videoContent
         };
 
 

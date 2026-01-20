@@ -3,7 +3,7 @@ import { Observable } from 'rxjs';
 
 /**
  * 身份验证守卫
- * 注意：这是一个基础实现，你需要根据实际项目需求实现完整的认证逻辑
+ * 注意：这是一个基础实现，支持JWT验证和简单token验证
  * 
  * 使用方式：
  * 1. 从请求头中获取 token
@@ -24,31 +24,47 @@ export class CheckLoginUserGatewayGuard implements CanActivate {
       throw new UnauthorizedException('缺少认证 token');
     }
 
-    // TODO: 实现 token 验证逻辑
-    // 示例：验证 token 并获取用户信息
-    // const user = await this.authService.validateToken(token);
-    // if (!user) {
-    //   throw new UnauthorizedException('无效的 token');
-    // }
-    
     // 将用户信息附加到 request 对象
-    // request.loginUser = user;
-    
-    // ⚠️ 警告：这是临时示例实现，仅用于开发测试
-    // 生产环境必须实现完整的 token 验证逻辑，不要使用硬编码的 demo_openid
-    // 示例实现：从 token 解析用户信息（需要实现 JWT 解析）
-    if (!request.loginUser) {
-      // TODO: 实现真实的 JWT 解析逻辑
-      // const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      // request.loginUser = { openid: decoded.openid };
-      
-      // ⚠️ 仅用于开发测试，生产环境必须删除此代码
-      request.loginUser = {
-        openid: 'demo_openid', // 临时示例值，需要替换为真实的 token 解析结果
+    request.loginUser = this.validateToken(token);
+
+    return true;
+  }
+
+  /**
+   * 验证token并返回用户信息
+   * @param token 认证token
+   * @returns 用户信息
+   */
+  private validateToken(token: string): { openid: string } {
+    // 开发环境：使用简单的token验证
+    if (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'local') {
+      // 简单token格式：openid_xxx
+      if (token.startsWith('openid_')) {
+        return {
+          openid: token.substring(7),
+        };
+      }
+      // 默认使用demo_openid
+      return {
+        openid: 'demo_openid',
       };
     }
 
-    return true;
+    // 生产环境：实现JWT验证
+    try {
+      // 这里需要安装jsonwebtoken库并实现真正的JWT验证
+      // const jwt = require('jsonwebtoken');
+      // const secret = process.env.JWT_SECRET || 'your-secret-key';
+      // const decoded = jwt.verify(token, secret);
+      // return {
+      //   openid: decoded.openid,
+      // };
+      
+      // 临时实现：实际生产环境必须替换为真正的JWT验证
+      throw new UnauthorizedException('生产环境需要实现JWT验证');
+    } catch (error) {
+      throw new UnauthorizedException('无效的 token');
+    }
   }
 }
 

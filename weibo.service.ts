@@ -2,30 +2,17 @@
  * 微博视频解析服务
  */
 import { BadRequestException, HttpException, Injectable } from '@nestjs/common';
-import { In, IsNull, Repository } from 'typeorm';
-import { InjectRepository } from '@nestjs/typeorm';
 import * as superagent from 'superagent';
-import { ShortVideoEntity } from './entities/shortVideo.entity';
 
 @Injectable()
 export class WeiboService {
     
-      constructor(
-        @InjectRepository(ShortVideoEntity)
-        private shortVideoRepository:Repository<ShortVideoEntity>,
-        
-    ) {}
+      constructor() {}
     log(...args:any[]){
         console.log("weibo:",...args);
     }
     async parseWatermark(url:string,openid:string,originUrl:string){
         console.log("url",url);
-        let shortVideo = new ShortVideoEntity();
-        shortVideo.type="weibo";
-        shortVideo.openid = openid;
-        shortVideo.contentType="video";
-        shortVideo.status=0;
-        shortVideo.originUrl=originUrl;
         let id = '';
         // 模式1: show?fid=
         if (url.includes('show?fid=')) {
@@ -41,10 +28,7 @@ export class WeiboService {
         }
 
         if (!id) {
-            shortVideo.status=2;
-            shortVideo.msg="解析失败！";
-            await this.shortVideoRepository.save(shortVideo);
-            return null;
+            throw new BadRequestException('解析失败！');
         }
         console.log("id",id);
         try {
@@ -58,39 +42,34 @@ export class WeiboService {
             const urls = playInfo.urls || {};
             const qualityKeys = Object.keys(urls);
             if (qualityKeys.length === 0) {
-                shortVideo.status=2;
-                shortVideo.msg="解析失败！";
-                await this.shortVideoRepository.save(shortVideo);
-                return null;
+                throw new BadRequestException('解析失败！');
             }
             
                 const one = qualityKeys[0];
                 const video_url = urls[one];
-                shortVideo.content={
+                const content = {
                         author: playInfo.author || '',
                         avatar: ('https:'+(playInfo.avatar || '')),
                         time: playInfo.real_date || '',
                         title: playInfo.text || playInfo.title || '',
                         cover: ('https:' + (playInfo.cover_image || '')),
                         url: ('https:' + video_url)
-                }
-                shortVideo.status=1;
-                shortVideo.msg="解析成功！";
-                shortVideo =await this.shortVideoRepository.save(shortVideo);
-                return {id:shortVideo.id};
-
+                };
+                
+                return {
+                    type: "weibo",
+                    openid,
+                    contentType: "video",
+                    status: 1,
+                    originUrl,
+                    content
+                };
             }
 
-            shortVideo.status=2 ;
-            shortVideo.msg="解析失败！";
-            await this.shortVideoRepository.save(shortVideo);
-            return null;
+            throw new BadRequestException('解析失败！');
         } catch (error) {
             console.error('解析失败:', error instanceof Error ? error.message : String(error));
-            shortVideo.status=2;
-            shortVideo.msg="解析失败！";
-            await this.shortVideoRepository.save(shortVideo);
-            return shortVideo;
+            throw new BadRequestException('解析失败！');
         }
     }
     /**

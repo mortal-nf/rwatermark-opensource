@@ -3,37 +3,23 @@
  */
 import { BadRequestException, HttpException, Injectable } from '@nestjs/common';
 import * as cheerio from 'cheerio';
-import { In, IsNull, Repository } from 'typeorm';
-import { InjectRepository } from '@nestjs/typeorm';;
 import * as superagent from 'superagent';
-import { ShortVideoEntity } from './entities/shortVideo.entity';
 
 @Injectable()
 export class ToutiaoService {
 
-      constructor(
-        @InjectRepository(ShortVideoEntity)
-        private shortVideoRepository:Repository<ShortVideoEntity>,
-        
-    ) {}
+      constructor() {}
     log(...args:any[]){
         console.log("toutiao:",...args);
     }
     async parseWatermark(url:string,openid:string,originUrl:string){
         console.log("url",url);
-        let shortVideo = new ShortVideoEntity();
-        shortVideo.type="toutiao";
-        shortVideo.openid = openid;
-        shortVideo.contentType="video";
-        shortVideo.status=0;
-        shortVideo.originUrl=originUrl;
-        let id = '';
+        let contentType = "video";
         
-
         try {
             let renderData = await this.getRenderData(url);
             console.log("renderData",renderData);
-            shortVideo.content={
+            const content = {
                  author: renderData.articleInfo?.mediaUser?.screenName || '',
                 uid: renderData.articleInfo?.creatorUid,
                 avatar: renderData.articleInfo?.mediaUser?.avatarUrl || '',
@@ -42,15 +28,9 @@ export class ToutiaoService {
                 title: renderData.articleInfo?.title || '',
                 description:renderData.articleInfo?.content || '',
                 cover: renderData.articleInfo?.posterUrl || '',
-                // images: string[] | string;
-                // url: string;
-                // music?: {
-                // title: string;
-                // author: string;
-                // avatar: string;
-                // url: string;
-                // } | string;
-            } 
+                url: '',
+                images: []
+            };
             // = playInfo.MainPlayUrl;
             let playInfo = null;
             if(renderData.GetPlayInfoToken){
@@ -59,15 +39,16 @@ export class ToutiaoService {
                 let PlayInfoList = res.Result.Data.PlayInfoList;
                 playInfo = PlayInfoList[PlayInfoList.length - 1];
                 // playInfo.url = playInfo.MainPlayUrl;
-                shortVideo.content.url = playInfo.MainPlayUrl;
+                content.url = playInfo.MainPlayUrl;
             }
             if(renderData.redirectUrl.startsWith("https://m.toutiao.com/article")){
             }
             if(renderData.redirectUrl.startsWith("https://m.toutiao.com/w")){
                 // 微头条
                 renderData.$(".weitoutiao-html").html();
-                shortVideo.content.description = renderData.$(".weitoutiao-content").html();
-                shortVideo.content.images=[];
+                content.description = renderData.$(".weitoutiao-content").html();
+                content.images = [];
+                contentType = "image";
                 let bodyHtml = renderData.$("body").html();
                 console.log("bodyHtml",bodyHtml);
                 let images = renderData.$(".image-list-src")
@@ -75,24 +56,26 @@ export class ToutiaoService {
                 for(let i = 0; i < images.length; i++){
                     let image = images.eq(i).css("background-image").match(/url\((.*?)\)/)[1];
                     if(image){
-                        shortVideo.content.images.push(image);
+                        content.images.push(image);
                     }
                 }
             }
             if(renderData.redirectUrl.startsWith("https://m.toutiao.com/video")){
 
             }
-            shortVideo.status=1;
-            shortVideo.msg="解析成功！";
-            shortVideo =await this.shortVideoRepository.save(shortVideo);
-            return {id:shortVideo.id};            
-
+            
+            return {
+                type: "toutiao",
+                openid,
+                contentType,
+                status: 1,
+                originUrl,
+                content
+            };
+            
         } catch (error) {
             console.error('解析失败:', error instanceof Error ? error.message : String(error));
-            shortVideo.status=2;
-            shortVideo.msg="解析失败！";
-            await this.shortVideoRepository.save(shortVideo);
-            return shortVideo;
+            throw new BadRequestException('解析失败！');
         }
     }
     async getGetPlayInfo(GetPlayInfoToken:string){

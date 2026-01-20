@@ -23,4 +23,8 @@ export class DownloadUrlDto {
     @IsUrl()
     @IsNotEmpty()
     url: string;
+    
+    @ApiProperty({ description: '下载文件的文件名', required: false })
+    @IsString()
+    fileName?: string;
 }

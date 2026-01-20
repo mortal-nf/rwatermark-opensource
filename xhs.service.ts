@@ -2,32 +2,19 @@
     小红书笔记解析服务
  */
 import { BadRequestException, HttpException, Injectable } from '@nestjs/common';
-import { In, IsNull, Repository } from 'typeorm';
-import { InjectRepository } from '@nestjs/typeorm';
 import * as superagent from 'superagent';
-import { ShortVideoEntity } from './entities/shortVideo.entity';
 
 @Injectable()
 export class XhsService {
     // 构造请求头
      proxyurl:string = ''; // 如果是香港服务器，需要设置 代理URL，否则无法解析
      userAgent:string = ` 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.128 Safari/537.36'`;
-      constructor(
-        @InjectRepository(ShortVideoEntity)
-        private shortVideoRepository:Repository<ShortVideoEntity>,
-        
-    ) {}
+      constructor() {}
     log(...args:any[]){
         console.log("xhs:",...args);
     }
     async parseWatermark(url:string,openid:string,originUrl:string){
         console.log("url",url);
-        let shortVideo = new ShortVideoEntity();
-        shortVideo.type="xhs";
-        shortVideo.openid = openid;
-        shortVideo.contentType="video";
-        shortVideo.status=0;
-        shortVideo.originUrl=originUrl;
         let finalUrl = url;
         let id: string | null = null;
         try {
@@ -45,21 +32,13 @@ export class XhsService {
             }
 
             if (!id) {
-            //    return output(400, '无法提取笔记 ID');
-              shortVideo.status=2;
-              shortVideo.msg="无法提取笔记 ID";
-              await this.shortVideoRepository.save(shortVideo);
-              return null;
+                throw new BadRequestException('无法提取笔记 ID');
             }
 
             // 发送请求获取视频信息
             const response = await this.get_curl(finalUrl, '');
             if (!response) {
-                shortVideo.status=2;
-                shortVideo.msg="请求失败";
-                await this.shortVideoRepository.save(shortVideo);
-                return null;
-            //    return output(400, '请求失败');
+                throw new BadRequestException('请求失败');
             }
 
             // 匹配 window.__INITIAL_STATE__ 的内容
@@ -67,11 +46,7 @@ export class XhsService {
             const matches = response.match(pattern);
 
             if (!matches || !matches[1]) {
-            //    return output(400, '匹配json数据失败');
-                shortVideo.status=2;
-                shortVideo.msg="匹配json数据失败";
-                await this.shortVideoRepository.save(shortVideo);
-               return null;
+                throw new BadRequestException('匹配json数据失败');
             }
 
             // 将 undefined 替换为 null
@@ -81,19 +56,11 @@ export class XhsService {
             try {
             decoded = JSON.parse(jsonData);
             } catch (error) {
-            //    return output(400, '匹配到的内容不是有效的 JSON 数据');
-                shortVideo.status=2;
-                shortVideo.msg="匹配到的内容不是有效的 JSON 数据";
-                await this.shortVideoRepository.save(shortVideo);
-                return null;
+                throw new BadRequestException('匹配到的内容不是有效的 JSON 数据');
             }
 
             if (!decoded) {
-            //    return output(400, '匹配到的内容不是有效的 JSON 数据');
-                shortVideo.status=2;
-                shortVideo.msg="匹配到的内容不是有效的 JSON 数据";
-                await this.shortVideoRepository.save(shortVideo);
-                return null;
+                throw new BadRequestException('匹配到的内容不是有效的 JSON 数据');
             }
             console.log("decoded",decoded.note);
             // 安全获取视频URL
@@ -137,11 +104,14 @@ export class XhsService {
                     cover: cover || '',
                     url: videourl,
                 };
-                shortVideo.content=data;
-                shortVideo.status=1;
-                shortVideo.msg="解析成功";
-                shortVideo =await this.shortVideoRepository.save(shortVideo);
-                return {id:shortVideo.id};
+                return {
+                    type: "xhs",
+                    openid,
+                    contentType: "video",
+                    status: 1,
+                    originUrl,
+                    content: data
+                };
             } 
             // 如果有图片数据
             else if (imageData && imageData.imageList) {
@@ -163,28 +133,25 @@ export class XhsService {
                     cover: cover || '',
                     images: images,
                 };
-                shortVideo.status=1;
-                shortVideo.msg="解析成功";
-                shortVideo.contentType="image";
-                shortVideo.content=data;
-                shortVideo = await this.shortVideoRepository.save(shortVideo);
-                return {id:shortVideo.id};
+                return {
+                    type: "xhs",
+                    openid,
+                    contentType: "image",
+                    status: 1,
+                    originUrl,
+                    content: data
+                };
             } 
             // 都没有
             else {
-                shortVideo.status=2;
-                shortVideo.msg="解析失败，未获取到视频链接";
-                await this.shortVideoRepository.save(shortVideo);
-                return null;
-                // return output(404, '解析失败，未获取到视频链接');
+                throw new BadRequestException('解析失败，未获取到视频链接');
             }
         } catch (error) {
-            this.log(error)
-            shortVideo.status=2;
-            shortVideo.msg="解析过程出错: " + (error instanceof Error ? error.message : String(error));
-            await this.shortVideoRepository.save(shortVideo);
-            return null;
-            // return output(400, '解析过程出错: ' + (error instanceof Error ? error.message : String(error)));
+            this.log(error);
+            if (error instanceof BadRequestException) {
+                throw error;
+            }
+            throw new BadRequestException('解析过程出错: ' + (error instanceof Error ? error.message : String(error)));
         }
     }
 

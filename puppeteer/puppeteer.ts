@@ -1,8 +1,9 @@
 
 import puppeteer from 'puppeteer-core';
-import chromeFinder from 'chrome-finder'
+// 直接设置默认浏览器路径，避免使用chrome-finder
 let browserWSEndpoint;
-let chromeFinderPath=process.env.CHROME_PATH||chromeFinder();
+// 使用环境变量或默认路径
+let chromeFinderPath = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 async function getBrowserInstance(getNew,  executablePath?) {
   if (browserWSEndpoint && !getNew) {
     return browserWSEndpoint

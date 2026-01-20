@@ -2,8 +2,8 @@ import {  HttpException, Injectable } from '@nestjs/common';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { ParseWatermarkDto } from './dto/rwatermark.dto';
-import { VDouyinService } from './vdouyin.service';
+import { ParseWatermarkDto } from '../../dto/rwatermark.dto';
+
 import * as superagent from 'superagent';
 import { XhsService } from './xhs.service';
 import { KuaishouService } from './kuaishou.service';
@@ -15,13 +15,13 @@ import { TwitterService } from './twitter.service';
 @Injectable()
 export class RWatermarkService {
       // 缓存目录路径
-      private readonly cacheDir = path.join(__dirname, 'shortVideos');
+      private readonly cacheDir = path.join(__dirname, '../../shortVideos');
       
       // 下载锁：存储正在下载的文件，key为文件路径，value为下载Promise
       private readonly downloadingFiles = new Map<string, Promise<{ body: Buffer; headers: any; contentType: string }>>();
 
       constructor(
-        private vdouyinService:VDouyinService,
+  
         private xhsService:XhsService,
         private kuaishouService:KuaishouService,
         private weiboService:WeiboService,

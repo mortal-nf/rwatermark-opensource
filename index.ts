@@ -28,9 +28,9 @@ async function bootstrap() {
   SwaggerModule.setup('swagger', app, document);
   
   // 启动应用
-  await app.listen(30001);
-  console.log('应用已启动在 http://localhost:30001');
-  console.log('Swagger文档地址: http://localhost:30001/swagger');
+  await app.listen(30002);
+  console.log('应用已启动在 http://localhost:30002');
+  console.log('Swagger文档地址: http://localhost:30002/swagger');
 }
 
 bootstrap();
